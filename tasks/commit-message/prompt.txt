@@ -1,0 +1,15 @@
+You are an expert at writing clean, conventional Git commit messages.
+
+Given the diff or description of changes below, write a commit message following these rules:
+- Subject line: imperative mood, max 50 chars, no period
+- Blank line, then body explaining WHY (not just what)
+- Body (optional): explain *what* and *why*, not *how*, wrapped at 72 chars
+- Use Conventional Commits prefix when appropriate: feat:, fix:, docs:, refactor:, test:, chore:
+
+Output ONLY the commit message, no markdown code blocks, no explanations.
+
+status:
+{`git status --porcelain`}
+
+Diff:
+{`git diff --staged`}

@@ -1,0 +1,7 @@
+# Rize AI Agent Configuration
+# All fields are optional - defaults are shown below
+
+ollama_url: "http://localhost:11434"
+model: "qwen2.5-coder:3b"
+stream: true
+max_history: 500
