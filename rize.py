@@ -5,6 +5,7 @@ Rize AI Agent - A terminal-based AI assistant powered by Ollama.
 Features:
   - {`command`}   → runs bash command and injects output into prompt
   - {@filepath}   → reads file content and injects into prompt
+  - !bash_command → runs the bash command
   - /taskname     → loads a predefined task prompt (with tab autocomplete)
   - ↑ / ↓         → navigate prompt history
   - Configurable via config.yaml
@@ -160,6 +161,32 @@ def expand_prompt(text: str) -> str:
     text = expand_files(text)
     return text
 
+def run_bash(command):
+    """Run a bash command and return its output."""
+    # Check if the command starts with '!'
+    if not command.startswith('!'):
+        raise ValueError("Input does not start with '!'.")
+    
+    # Remove the leading '!' from the command
+    bash_command = command[1:].strip()
+    
+    try:
+        # Run the bash command using subprocess and capture the output
+        result = subprocess.run(
+            bash_command, shell=True, capture_output=True, text=True, timeout=30
+        )
+        
+        # Return the stdout if the command was successful
+        if result.returncode == 0:
+            return f"{result.stdout.strip()}"
+        else:
+            # If there was an error, include both stdout and stderr in the output
+            return f"\n[error: command failed]\n$ {bash_command}\n{result.stderr.strip()}\n"
+    except subprocess.TimeoutExpired:
+        return f"\n[error: command timed out: {bash_command}]\n"
+    except Exception as e:
+        return f"\n[error running command: {e}]\n"
+
 # ── Task injection ─────────────────────────────────────────────────────────────
 def resolve_task_prefix(user_input: str) -> tuple[str, Optional[str], Optional[str]]:
     """
@@ -256,6 +283,7 @@ Commands:
 Prompt syntax:
   {`bash command`}         Inject command output into prompt
   {@/path/to/file}         Inject file contents into prompt
+  ! bash_command           Runs the bash_command
 
 Navigation:
   ↑ / ↓                    Browse prompt history
@@ -276,6 +304,17 @@ def repl(config: dict):
 
         if not user_input:
             continue
+
+        # ── Run bash command if input starts with '!' ───────────────────────────
+        if user_input.startswith('!'):
+            try:
+                bash_output = run_bash(user_input)
+                print(bash_output)
+                continue
+            except ValueError as e:
+                print(e)
+                continue
+
 
         # ── Built-in commands ──────────────────────────────────────────────────
         if user_input.lower() in ("exit", "quit"):
