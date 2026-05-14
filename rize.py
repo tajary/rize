@@ -178,7 +178,7 @@ def run_bash(command):
         
         # Return the stdout if the command was successful
         if result.returncode == 0:
-            return f"{result.stdout.strip()}"
+            return f"{result.stdout.strip()}\n{result.stderr.strip()}".strip()
         else:
             # If there was an error, include both stdout and stderr in the output
             return f"\n[error: command failed]\n$ {bash_command}\n{result.stderr.strip()}\n"
