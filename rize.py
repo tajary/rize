@@ -7,6 +7,8 @@ Features:
   - {@filepath}   → reads file content and injects into prompt
   - !bash_command → runs the bash command
   - /taskname     → loads a predefined task prompt (with tab autocomplete)
+  - /system       → sets the system prompt for the next user prompts
+  - /show-system  → shows the system prompt
   - ↑ / ↓         → navigate prompt history
   - Configurable via config.yaml
 """
@@ -29,6 +31,7 @@ AGENT_DIR = Path(__file__).parent.resolve()
 TASKS_DIR = AGENT_DIR / "tasks"
 HISTORY_FILE = AGENT_DIR / ".agent_history"
 CONFIG_FILE = AGENT_DIR / "config.yaml"
+SYSTEM_PROMPT_FILE = AGENT_DIR / "SYSTEM_PROMPT.md"
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 DEFAULT_CONFIG = {
@@ -36,10 +39,15 @@ DEFAULT_CONFIG = {
     "model": "qwen2.5-coder:3b",
     "max_history": 500,
     "stream": True,
+    "system": ""
 }
+
 
 def load_config() -> dict:
     config = DEFAULT_CONFIG.copy()
+    if SYSTEM_PROMPT_FILE.exists():
+        config["system"] = SYSTEM_PROMPT_FILE.read_text().strip()
+        
     if CONFIG_FILE.exists():
         try:
             import yaml  # optional dependency
@@ -178,7 +186,7 @@ def run_bash(command):
         
         # Return the stdout if the command was successful
         if result.returncode == 0:
-            return f"{result.stdout.strip()}\n{result.stderr.strip()}".strip()
+            return f"{result.stdout.strip()}\n{result.stderr.strip()}".strip() + "\n"
         else:
             # If there was an error, include both stdout and stderr in the output
             return f"\n[error: command failed]\n$ {bash_command}\n{result.stderr.strip()}\n"
@@ -195,7 +203,7 @@ def resolve_task_prefix(user_input: str) -> tuple[str, Optional[str], Optional[s
     """
     stripped = user_input.strip()
     if not stripped.startswith("/"):
-        return user_input, "", None
+        return user_input, None
 
     parts = stripped.split(None, 1)
     task_name = parts[0][1:]  # strip leading /
@@ -204,11 +212,11 @@ def resolve_task_prefix(user_input: str) -> tuple[str, Optional[str], Optional[s
     task_prompt = load_task(task_name)
     if task_prompt is None:
         print(f"[warn] Task '{task_name}' not found or has no prompt file.", file=sys.stderr)
-        return remainder, "", None
+        return remainder, None
 
     print(f"  [task] Loaded: {task_name}", file=sys.stderr)
     #print(remainder,"=>", task_prompt)
-    return remainder, task_prompt, task_name
+    return task_prompt + " " + remainder, task_name
 
 
 def load_hooks(task_name: str):
@@ -226,18 +234,17 @@ def load_hooks(task_name: str):
         return None
 
 # ── Ollama API ─────────────────────────────────────────────────────────────────
-def call_ollama(prompt: str, system: Optional[str], config: dict) -> str:
+def call_ollama(prompt: str, config: dict) -> str:
     """Send prompt to Ollama and return the response text."""
     url = config["ollama_url"].rstrip("/") + "/api/generate"
     payload: dict = {
         "model": config["model"],
         "prompt": prompt,
         "stream": config.get("stream", True),
+        "system": config["system"]
     }
     #print(payload)
-    if system:
-        payload["system"] = system
-
+    
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
 
@@ -277,6 +284,8 @@ Commands:
   /taskname [extra text]   Load a predefined task prompt
   /tasks                   List all available tasks
   /model <name>            Switch Ollama model
+  /system                  Set the system prompt
+  /show-system             Show the system prompt
   /help                    Show this help
   exit / quit / Ctrl+D     Quit
 
@@ -291,7 +300,7 @@ Navigation:
 """
 
 def repl(config: dict):
-    print(f"\n🤖 AI Agent  |  model: {config['model']}  |  /help for commands\n")
+    print(f"\n🤖 rize  |  model: {config['model']}  |  /help for commands\n")
     setup_readline()
 
     while True:
@@ -336,6 +345,17 @@ def repl(config: dict):
                 print("No tasks found in", TASKS_DIR)
             continue
 
+        # ── /system command to set the system prompt ───────────────────────────
+        if user_input.startswith("/system "):
+            config["system"] = user_input[8:]
+            print(f"System prompt updated.")
+            continue
+
+        if user_input.startswith("/show-system"):
+            print(f"System prompt: {config['system']}")
+            continue
+
+
         if user_input.startswith("/model "):
             new_model = user_input[7:].strip()
             if new_model:
@@ -344,21 +364,19 @@ def repl(config: dict):
             continue
 
         # ── Resolve task prefix ────────────────────────────────────────────────
-        user_input, system_prompt, task_name = resolve_task_prefix(user_input)
-        user_input = (system_prompt + " " + user_input).strip()
-        system_prompt = ""
+        user_input, task_name = resolve_task_prefix(user_input)
         # ── Expand {`cmd`} and {@file} ─────────────────────────────────────────
         has_expansions = re.search(r'\{`[^`]+`\}|\{@[^\}]+\}', user_input)
         if has_expansions:
             print("  [expanding...]", file=sys.stderr)
         expanded = expand_prompt(user_input)
 
-        if not expanded.strip() and not system_prompt:
+        if not expanded.strip():
             continue
 
         hooks = load_hooks(task_name) if task_name else None
         if hooks and hasattr(hooks, "pre_send"):
-            expanded = hooks.pre_send(expanded, system_prompt)
+            expanded = hooks.pre_send(expanded)
             if expanded is None:
                 continue  # hook cancelled the request   
                 
@@ -366,7 +384,7 @@ def repl(config: dict):
                      
         # ── Call Ollama ────────────────────────────────────────────────────────
         print(f"\n── {config['model']} ──────────────────────────────────────\n")
-        response = call_ollama(expanded, system_prompt, config)
+        response = call_ollama(expanded, config)
         
         # ── post_response hook ─────────────────────────────────────────────────
         if hooks and hasattr(hooks, "post_response"):
